@@ -1,6 +1,11 @@
 use nalgebra::{DMatrix, DVector};
 use rand::Rng;
-use rand_distr::{Distribution as RandDistribution, Exp, Normal};
+use rand_distr::{
+    Beta as RandBeta, ChiSquared as RandChiSquared, Distribution as RandDistribution, Exp,
+    FisherF as RandFisherF, Gamma as RandGamma, Gumbel as RandGumbel, LogNormal as RandLogNormal,
+    Normal, StudentT as RandStudentT, Weibull as RandWeibull,
+};
+use statrs::function::gamma::gamma;
 
 use crate::error::{Error, Result, dim_error};
 
@@ -261,6 +266,379 @@ impl Distribution for Exponential {
 }
 
 #[derive(Debug, Clone)]
+pub struct Gamma {
+    shape: f64,
+    scale: f64,
+    moments: MomentDistribution,
+}
+
+impl Gamma {
+    pub fn univariate(shape: f64, scale: f64) -> Result<Self> {
+        require_positive("shape", shape)?;
+        require_positive("scale", scale)?;
+        let mean = shape * scale;
+        let variance = shape * scale.powi(2);
+        Ok(Self {
+            shape,
+            scale,
+            moments: univariate_moments(mean, variance, PolynomialFamily::MomentOnly)?,
+        })
+    }
+}
+
+impl Distribution for Gamma {
+    fn mean(&self) -> &DVector<f64> {
+        self.moments.mean()
+    }
+
+    fn covariance(&self) -> &DMatrix<f64> {
+        self.moments.covariance()
+    }
+
+    fn cov_cholesky(&self) -> &DMatrix<f64> {
+        self.moments.cov_cholesky()
+    }
+
+    fn polynomial_family(&self) -> &[PolynomialFamily] {
+        self.moments.polynomial_family()
+    }
+
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> DVector<f64> {
+        let gamma = RandGamma::new(self.shape, self.scale).expect("positive gamma parameters");
+        DVector::from_element(1, gamma.sample(rng))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ChiSquared {
+    degrees_of_freedom: f64,
+    moments: MomentDistribution,
+}
+
+impl ChiSquared {
+    pub fn univariate(degrees_of_freedom: f64) -> Result<Self> {
+        require_positive("degrees_of_freedom", degrees_of_freedom)?;
+        Ok(Self {
+            degrees_of_freedom,
+            moments: univariate_moments(
+                degrees_of_freedom,
+                2.0 * degrees_of_freedom,
+                PolynomialFamily::MomentOnly,
+            )?,
+        })
+    }
+}
+
+impl Distribution for ChiSquared {
+    fn mean(&self) -> &DVector<f64> {
+        self.moments.mean()
+    }
+
+    fn covariance(&self) -> &DMatrix<f64> {
+        self.moments.covariance()
+    }
+
+    fn cov_cholesky(&self) -> &DMatrix<f64> {
+        self.moments.cov_cholesky()
+    }
+
+    fn polynomial_family(&self) -> &[PolynomialFamily] {
+        self.moments.polynomial_family()
+    }
+
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> DVector<f64> {
+        let chi =
+            RandChiSquared::new(self.degrees_of_freedom).expect("positive degrees of freedom");
+        DVector::from_element(1, chi.sample(rng))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogNormal {
+    location: f64,
+    scale: f64,
+    moments: MomentDistribution,
+}
+
+impl LogNormal {
+    pub fn univariate(location: f64, scale: f64) -> Result<Self> {
+        require_positive("scale", scale)?;
+        let variance_factor = scale.powi(2).exp() - 1.0;
+        let mean = (location + 0.5 * scale.powi(2)).exp();
+        let variance = variance_factor * (2.0 * location + scale.powi(2)).exp();
+        Ok(Self {
+            location,
+            scale,
+            moments: univariate_moments(mean, variance, PolynomialFamily::MomentOnly)?,
+        })
+    }
+}
+
+impl Distribution for LogNormal {
+    fn mean(&self) -> &DVector<f64> {
+        self.moments.mean()
+    }
+
+    fn covariance(&self) -> &DMatrix<f64> {
+        self.moments.covariance()
+    }
+
+    fn cov_cholesky(&self) -> &DMatrix<f64> {
+        self.moments.cov_cholesky()
+    }
+
+    fn polynomial_family(&self) -> &[PolynomialFamily] {
+        self.moments.polynomial_family()
+    }
+
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> DVector<f64> {
+        let log_normal = RandLogNormal::new(self.location, self.scale).expect("positive scale");
+        DVector::from_element(1, log_normal.sample(rng))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Weibull {
+    scale: f64,
+    shape: f64,
+    moments: MomentDistribution,
+}
+
+impl Weibull {
+    pub fn univariate(scale: f64, shape: f64) -> Result<Self> {
+        require_positive("scale", scale)?;
+        require_positive("shape", shape)?;
+        let mean = scale * gamma(1.0 + 1.0 / shape);
+        let variance =
+            scale.powi(2) * (gamma(1.0 + 2.0 / shape) - gamma(1.0 + 1.0 / shape).powi(2));
+        Ok(Self {
+            scale,
+            shape,
+            moments: univariate_moments(mean, variance, PolynomialFamily::MomentOnly)?,
+        })
+    }
+}
+
+impl Distribution for Weibull {
+    fn mean(&self) -> &DVector<f64> {
+        self.moments.mean()
+    }
+
+    fn covariance(&self) -> &DMatrix<f64> {
+        self.moments.covariance()
+    }
+
+    fn cov_cholesky(&self) -> &DMatrix<f64> {
+        self.moments.cov_cholesky()
+    }
+
+    fn polynomial_family(&self) -> &[PolynomialFamily] {
+        self.moments.polynomial_family()
+    }
+
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> DVector<f64> {
+        let weibull =
+            RandWeibull::new(self.scale, self.shape).expect("positive weibull parameters");
+        DVector::from_element(1, weibull.sample(rng))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Beta {
+    alpha: f64,
+    beta: f64,
+    moments: MomentDistribution,
+}
+
+impl Beta {
+    pub fn univariate(alpha: f64, beta: f64) -> Result<Self> {
+        require_positive("alpha", alpha)?;
+        require_positive("beta", beta)?;
+        let sum = alpha + beta;
+        let mean = alpha / sum;
+        let variance = alpha * beta / (sum.powi(2) * (sum + 1.0));
+        Ok(Self {
+            alpha,
+            beta,
+            moments: univariate_moments(mean, variance, PolynomialFamily::MomentOnly)?,
+        })
+    }
+}
+
+impl Distribution for Beta {
+    fn mean(&self) -> &DVector<f64> {
+        self.moments.mean()
+    }
+
+    fn covariance(&self) -> &DMatrix<f64> {
+        self.moments.covariance()
+    }
+
+    fn cov_cholesky(&self) -> &DMatrix<f64> {
+        self.moments.cov_cholesky()
+    }
+
+    fn polynomial_family(&self) -> &[PolynomialFamily] {
+        self.moments.polynomial_family()
+    }
+
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> DVector<f64> {
+        let beta = RandBeta::new(self.alpha, self.beta).expect("positive beta parameters");
+        DVector::from_element(1, beta.sample(rng))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StudentT {
+    degrees_of_freedom: f64,
+    moments: MomentDistribution,
+}
+
+impl StudentT {
+    pub fn univariate(degrees_of_freedom: f64) -> Result<Self> {
+        if degrees_of_freedom <= 2.0 {
+            return Err(Error::NonPositiveParameter {
+                name: "degrees_of_freedom - 2",
+                value: degrees_of_freedom - 2.0,
+            });
+        }
+        Ok(Self {
+            degrees_of_freedom,
+            moments: univariate_moments(
+                0.0,
+                degrees_of_freedom / (degrees_of_freedom - 2.0),
+                PolynomialFamily::MomentOnly,
+            )?,
+        })
+    }
+}
+
+impl Distribution for StudentT {
+    fn mean(&self) -> &DVector<f64> {
+        self.moments.mean()
+    }
+
+    fn covariance(&self) -> &DMatrix<f64> {
+        self.moments.covariance()
+    }
+
+    fn cov_cholesky(&self) -> &DMatrix<f64> {
+        self.moments.cov_cholesky()
+    }
+
+    fn polynomial_family(&self) -> &[PolynomialFamily] {
+        self.moments.polynomial_family()
+    }
+
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> DVector<f64> {
+        let student_t =
+            RandStudentT::new(self.degrees_of_freedom).expect("finite student-t moments");
+        DVector::from_element(1, student_t.sample(rng))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FisherF {
+    numerator_degrees_of_freedom: f64,
+    denominator_degrees_of_freedom: f64,
+    moments: MomentDistribution,
+}
+
+impl FisherF {
+    pub fn univariate(
+        numerator_degrees_of_freedom: f64,
+        denominator_degrees_of_freedom: f64,
+    ) -> Result<Self> {
+        require_positive("numerator_degrees_of_freedom", numerator_degrees_of_freedom)?;
+        if denominator_degrees_of_freedom <= 4.0 {
+            return Err(Error::NonPositiveParameter {
+                name: "denominator_degrees_of_freedom - 4",
+                value: denominator_degrees_of_freedom - 4.0,
+            });
+        }
+        let d1 = numerator_degrees_of_freedom;
+        let d2 = denominator_degrees_of_freedom;
+        let mean = d2 / (d2 - 2.0);
+        let variance = 2.0 * d2.powi(2) * (d1 + d2 - 2.0) / (d1 * (d2 - 2.0).powi(2) * (d2 - 4.0));
+        Ok(Self {
+            numerator_degrees_of_freedom,
+            denominator_degrees_of_freedom,
+            moments: univariate_moments(mean, variance, PolynomialFamily::MomentOnly)?,
+        })
+    }
+}
+
+impl Distribution for FisherF {
+    fn mean(&self) -> &DVector<f64> {
+        self.moments.mean()
+    }
+
+    fn covariance(&self) -> &DMatrix<f64> {
+        self.moments.covariance()
+    }
+
+    fn cov_cholesky(&self) -> &DMatrix<f64> {
+        self.moments.cov_cholesky()
+    }
+
+    fn polynomial_family(&self) -> &[PolynomialFamily] {
+        self.moments.polynomial_family()
+    }
+
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> DVector<f64> {
+        let fisher_f = RandFisherF::new(
+            self.numerator_degrees_of_freedom,
+            self.denominator_degrees_of_freedom,
+        )
+        .expect("finite fisher-f moments");
+        DVector::from_element(1, fisher_f.sample(rng))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ExtremeValue {
+    location: f64,
+    scale: f64,
+    moments: MomentDistribution,
+}
+
+impl ExtremeValue {
+    pub fn univariate(location: f64, scale: f64) -> Result<Self> {
+        require_positive("scale", scale)?;
+        let mean = location + 0.577_215_664_901_532_9 * scale;
+        let variance = std::f64::consts::PI.powi(2) * scale.powi(2) / 6.0;
+        Ok(Self {
+            location,
+            scale,
+            moments: univariate_moments(mean, variance, PolynomialFamily::MomentOnly)?,
+        })
+    }
+}
+
+impl Distribution for ExtremeValue {
+    fn mean(&self) -> &DVector<f64> {
+        self.moments.mean()
+    }
+
+    fn covariance(&self) -> &DMatrix<f64> {
+        self.moments.covariance()
+    }
+
+    fn cov_cholesky(&self) -> &DMatrix<f64> {
+        self.moments.cov_cholesky()
+    }
+
+    fn polynomial_family(&self) -> &[PolynomialFamily] {
+        self.moments.polynomial_family()
+    }
+
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> DVector<f64> {
+        let gumbel = RandGumbel::new(self.location, self.scale).expect("positive scale");
+        DVector::from_element(1, gumbel.sample(rng))
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct MultivariateUncorrelated<D> {
     components: Vec<D>,
     moments: MomentDistribution,
@@ -340,4 +718,75 @@ fn cholesky_factor(covariance: &DMatrix<f64>) -> Result<DMatrix<f64>> {
         .cholesky()
         .map(|factor| factor.l())
         .ok_or(Error::NotPositiveDefinite("covariance"))
+}
+
+fn require_positive(name: &'static str, value: f64) -> Result<()> {
+    if value <= 0.0 {
+        Err(Error::NonPositiveParameter { name, value })
+    } else {
+        Ok(())
+    }
+}
+
+fn univariate_moments(
+    mean: f64,
+    variance: f64,
+    family: PolynomialFamily,
+) -> Result<MomentDistribution> {
+    MomentDistribution::new(
+        DVector::from_element(1, mean),
+        DMatrix::from_element(1, 1, variance),
+        vec![family],
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
+
+    #[test]
+    fn additional_univariate_distributions_have_expected_moments() {
+        assert_scalar_moments(&Gamma::univariate(2.0, 3.0).unwrap());
+        assert_scalar_moments(&ChiSquared::univariate(5.0).unwrap());
+        assert_scalar_moments(&LogNormal::univariate(0.2, 0.4).unwrap());
+        assert_scalar_moments(&Weibull::univariate(2.0, 3.0).unwrap());
+        assert_scalar_moments(&Beta::univariate(2.0, 5.0).unwrap());
+        assert_scalar_moments(&StudentT::univariate(5.0).unwrap());
+        assert_scalar_moments(&FisherF::univariate(6.0, 10.0).unwrap());
+        assert_scalar_moments(&ExtremeValue::univariate(1.0, 2.0).unwrap());
+    }
+
+    #[test]
+    fn finite_moment_distributions_sample_scalars() {
+        let mut rng = StdRng::seed_from_u64(7);
+        assert_scalar_sample(&Gamma::univariate(2.0, 3.0).unwrap(), &mut rng);
+        assert_scalar_sample(&ChiSquared::univariate(5.0).unwrap(), &mut rng);
+        assert_scalar_sample(&LogNormal::univariate(0.2, 0.4).unwrap(), &mut rng);
+        assert_scalar_sample(&Weibull::univariate(2.0, 3.0).unwrap(), &mut rng);
+        assert_scalar_sample(&Beta::univariate(2.0, 5.0).unwrap(), &mut rng);
+        assert_scalar_sample(&StudentT::univariate(5.0).unwrap(), &mut rng);
+        assert_scalar_sample(&FisherF::univariate(6.0, 10.0).unwrap(), &mut rng);
+        assert_scalar_sample(&ExtremeValue::univariate(1.0, 2.0).unwrap(), &mut rng);
+    }
+
+    #[test]
+    fn student_t_and_fisher_f_reject_infinite_variance_parameters() {
+        assert!(StudentT::univariate(2.0).is_err());
+        assert!(FisherF::univariate(4.0, 4.0).is_err());
+    }
+
+    fn assert_scalar_moments<D: Distribution>(dist: &D) {
+        assert_eq!(dist.dimension(), 1);
+        assert!(dist.mean()[0].is_finite());
+        assert!(dist.covariance()[(0, 0)] > 0.0);
+        assert_eq!(dist.polynomial_family(), &[PolynomialFamily::MomentOnly]);
+    }
+
+    fn assert_scalar_sample<D: Distribution, R: Rng + ?Sized>(dist: &D, rng: &mut R) {
+        let sample = dist.sample(rng);
+        assert_eq!(sample.len(), 1);
+        assert!(sample[0].is_finite());
+    }
 }

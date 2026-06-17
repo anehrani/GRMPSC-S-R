@@ -317,6 +317,145 @@ impl PointTransformation for StirlingFirstOrder {
 }
 
 #[derive(Debug, Clone)]
+pub struct StirlingSecondOrder {
+    dim_x: usize,
+    dim_y: usize,
+    step_size: f64,
+    num_uncertain: usize,
+    normalized_points: DMatrix<f64>,
+    weight_mean_center: f64,
+    weight_mean_axis: f64,
+    weight_cov_first: f64,
+    weight_cov_second: f64,
+}
+
+impl StirlingSecondOrder {
+    pub fn new(dim_x: usize, dim_y: usize, step_size: f64) -> Result<Self> {
+        Self::with_uncertain(dim_x, dim_y, step_size, vec![true; dim_x])
+    }
+
+    pub fn with_uncertain(
+        dim_x: usize,
+        dim_y: usize,
+        step_size: f64,
+        consider_uncertain: Vec<bool>,
+    ) -> Result<Self> {
+        if step_size <= 0.0 {
+            return Err(Error::NonPositiveParameter {
+                name: "step_size",
+                value: step_size,
+            });
+        }
+        if consider_uncertain.len() != dim_x {
+            return Err(dim_error(
+                "consider_uncertain",
+                dim_x.to_string(),
+                consider_uncertain.len().to_string(),
+            ));
+        }
+        let uncertain_indices: Vec<_> = consider_uncertain
+            .iter()
+            .enumerate()
+            .filter_map(|(i, uncertain)| uncertain.then_some(i))
+            .collect();
+        let num_uncertain = uncertain_indices.len();
+        if num_uncertain == 0 {
+            return Err(Error::Empty("uncertain variables"));
+        }
+        let mut normalized_points = DMatrix::zeros(dim_x, 2 * num_uncertain + 1);
+        for (j, idx) in uncertain_indices.into_iter().enumerate() {
+            normalized_points[(idx, 1 + j)] = step_size;
+            normalized_points[(idx, 1 + num_uncertain + j)] = -step_size;
+        }
+        let step_size_squared = step_size.powi(2);
+        Ok(Self {
+            dim_x,
+            dim_y,
+            step_size,
+            num_uncertain,
+            normalized_points,
+            weight_mean_center: (step_size_squared - num_uncertain as f64) / step_size_squared,
+            weight_mean_axis: 1.0 / (2.0 * step_size_squared),
+            weight_cov_first: 1.0 / (4.0 * step_size_squared),
+            weight_cov_second: (step_size_squared - 1.0) / (4.0 * step_size_squared.powi(2)),
+        })
+    }
+}
+
+impl PointTransformation for StirlingSecondOrder {
+    fn input_dimension(&self) -> usize {
+        self.dim_x
+    }
+
+    fn output_dimension(&self) -> usize {
+        self.dim_y
+    }
+
+    fn number_of_points(&self) -> usize {
+        self.normalized_points.ncols()
+    }
+
+    fn normalized_points(&self) -> &DMatrix<f64> {
+        &self.normalized_points
+    }
+
+    fn mean(&self, points: &DMatrix<f64>) -> Result<DVector<f64>> {
+        require_points(points, self.dim_y, self.number_of_points(), "mean points")?;
+        let mut mean = self.weight_mean_center * points.column(0);
+        for i in 1..=self.num_uncertain {
+            mean += self.weight_mean_axis * (points.column(i) + points.column(i + self.num_uncertain));
+        }
+        Ok(mean.into_owned())
+    }
+
+    fn covariance(&self, points_x: &DMatrix<f64>, points_y: &DMatrix<f64>) -> Result<DMatrix<f64>> {
+        require_points(
+            points_x,
+            self.dim_x,
+            self.number_of_points(),
+            "covariance x points",
+        )?;
+        require_points(
+            points_y,
+            self.dim_y,
+            self.number_of_points(),
+            "covariance y points",
+        )?;
+        let mut covariance = DMatrix::zeros(self.dim_x, self.dim_y);
+        for i in 1..=self.num_uncertain {
+            let dx_first = points_x.column(i) - points_x.column(i + self.num_uncertain);
+            let dy_first = points_y.column(i) - points_y.column(i + self.num_uncertain);
+            covariance += self.weight_cov_first * dx_first * dy_first.transpose();
+
+            let dx_second =
+                points_x.column(i) + points_x.column(i + self.num_uncertain) - 2.0 * points_x.column(0);
+            let dy_second =
+                points_y.column(i) + points_y.column(i + self.num_uncertain) - 2.0 * points_y.column(0);
+            covariance += self.weight_cov_second * dx_second * dy_second.transpose();
+        }
+        Ok(covariance)
+    }
+
+    fn variance(&self, points: &DVector<f64>) -> Result<f64> {
+        if points.len() != self.number_of_points() {
+            return Err(dim_error(
+                "variance points",
+                self.number_of_points().to_string(),
+                points.len().to_string(),
+            ));
+        }
+        let mut variance = 0.0;
+        for i in 1..=self.num_uncertain {
+            let first = points[i] - points[i + self.num_uncertain];
+            let second = points[i] + points[i + self.num_uncertain] - 2.0 * points[0];
+            variance += self.weight_cov_first * first.powi(2)
+                + self.weight_cov_second * second.powi(2);
+        }
+        Ok(variance)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ComposedQuadrature {
     dim_x: usize,
     dim_y: usize,
