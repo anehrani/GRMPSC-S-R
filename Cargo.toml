@@ -6,7 +6,7 @@ license = "BSD-3-Clause"
 description = "Rust-native stochastic MPC building blocks inspired by GRAMPC-S"
 
 [dependencies]
-grmpsc-s-r = { package = "grampc-s-rs", git = "https://github.com/schliffen/GRMPSC-S-R.git" }
+predictiveControl = { package = "grampc-s-rs", git = "https://github.com/schliffen/GRMPSC-S-R.git" }
 nalgebra = { version = "0.33.3", default-features = false, features = ["std"] }
 rand = "0.9.2"
 rand_distr = "0.5.1"
